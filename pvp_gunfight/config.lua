@@ -30,11 +30,21 @@ Config.Discord = {
     -- Active/Désactive les avatars Discord
     enabled = true,
     
-    -- Token du bot Discord (OPTIONNEL)
-    -- Si fourni, permet de récupérer les vrais avatars personnalisés
-    -- Si vide, utilise les avatars par défaut Discord basés sur l'ID
-    -- Pour obtenir un token: https://discord.com/developers/applications
-    botToken = '',
+    -- ⚠️ TOKEN DU BOT DISCORD (OBLIGATOIRE POUR LES AVATARS PERSONNALISÉS) ⚠️
+    -- 
+    -- COMMENT OBTENIR LE TOKEN :
+    -- 1. Va sur https://discord.com/developers/applications
+    -- 2. Clique "New Application" → Donne un nom (ex: "PVP Avatar Bot")
+    -- 3. Va dans l'onglet "Bot" → Clique "Add Bot"
+    -- 4. ACTIVE CES INTENTS OBLIGATOIRES :
+    --    ✅ Server Members Intent
+    --    ✅ Message Content Intent (optionnel)
+    -- 5. Copie le TOKEN (clique "Reset Token" si besoin)
+    -- 6. Colle-le ci-dessous entre les guillemets
+    --
+    -- ⚠️ NE PARTAGE JAMAIS TON TOKEN PUBLIQUEMENT ⚠️
+    --
+    botToken = '', 
     
     -- Taille des avatars (64, 128, 256, 512, 1024)
     avatarSize = 128,
@@ -42,7 +52,7 @@ Config.Discord = {
     -- Format des avatars (png, jpg, webp, gif)
     avatarFormat = 'png',
     
-    -- Avatar par défaut si pas de Discord lié
+    -- Avatar par défaut si pas de Discord lié OU si le token est invalide
     defaultAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png',
     
     -- Durée du cache en secondes (5 minutes par défaut)

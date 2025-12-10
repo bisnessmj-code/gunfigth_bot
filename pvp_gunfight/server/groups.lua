@@ -1,6 +1,6 @@
 -- ========================================
 -- PVP GUNFIGHT - SYSTÈME DE GROUPES
--- Version: 2.4.0 - Avec avatars Discord
+-- Version: 2.4.1 - Fix avec avatars asynchrones
 -- ========================================
 
 DebugGroups('Module chargé')
@@ -33,21 +33,109 @@ local function BroadcastToGroup(groupId)
     local group = groups[groupId]
     if not group then return end
     DebugGroups('Broadcast au groupe %d avec %d membres', groupId, #group.members)
+    
+    -- ⚡ CHANGEMENT: Charger les données de groupe de manière asynchrone pour chaque membre
     for _, memberId in ipairs(group.members) do
-        local groupData = GetGroupData(memberId)
-        DebugGroups('Envoi données groupe à %d', memberId)
-        TriggerClientEvent('pvp:updateGroupUI', memberId, groupData)
+        -- Lancer la récupération asynchrone des données du groupe
+        CreateThread(function()
+            GetGroupDataAsync(memberId, function(groupData)
+                DebugGroups('✅ Envoi données groupe à %d avec avatars chargés', memberId)
+                TriggerClientEvent('pvp:updateGroupUI', memberId, groupData)
+            end)
+        end)
     end
 end
 
+---Récupère les données du groupe de manière asynchrone avec les avatars Discord
+---@param playerId number ID du joueur
+---@param callback function Fonction appelée avec les données du groupe
+function GetGroupDataAsync(playerId, callback)
+    local group = GetPlayerGroup(playerId)
+    if not group then 
+        callback(nil)
+        return
+    end
+    
+    local members = {}
+    local completed = 0
+    local total = #group.members
+    
+    -- ⚡ CHANGEMENT: Récupérer les avatars de manière asynchrone pour chaque membre
+    for _, memberId in ipairs(group.members) do
+        local xPlayer = ESX.GetPlayerFromId(memberId)
+        if xPlayer then
+            -- Récupérer l'avatar de manière asynchrone
+            if Config.Discord and Config.Discord.enabled then
+                exports['pvp_gunfight']:GetPlayerDiscordAvatarAsync(memberId, function(avatarUrl)
+                    table.insert(members, {
+                        id = memberId,
+                        name = xPlayer.getName(),
+                        isLeader = memberId == group.leaderId,
+                        isReady = group.ready[memberId] or false,
+                        isYou = memberId == playerId,
+                        yourId = playerId,
+                        avatar = avatarUrl
+                    })
+                    
+                    completed = completed + 1
+                    
+                    -- Une fois tous les membres traités, appeler le callback
+                    if completed == total then
+                        callback({
+                            id = group.id,
+                            leaderId = group.leaderId,
+                            members = members
+                        })
+                    end
+                end)
+            else
+                -- Discord désactivé, utiliser l'avatar par défaut
+                table.insert(members, {
+                    id = memberId,
+                    name = xPlayer.getName(),
+                    isLeader = memberId == group.leaderId,
+                    isReady = group.ready[memberId] or false,
+                    isYou = memberId == playerId,
+                    yourId = playerId,
+                    avatar = Config.Discord and Config.Discord.defaultAvatar or 'https://cdn.discordapp.com/embed/avatars/0.png'
+                })
+                
+                completed = completed + 1
+                
+                if completed == total then
+                    callback({
+                        id = group.id,
+                        leaderId = group.leaderId,
+                        members = members
+                    })
+                end
+            end
+        else
+            -- Joueur non trouvé, continuer quand même
+            completed = completed + 1
+            if completed == total then
+                callback({
+                    id = group.id,
+                    leaderId = group.leaderId,
+                    members = members
+                })
+            end
+        end
+    end
+end
+
+---Version synchrone de GetGroupData (DEPRECATED - Utilise les avatars en cache uniquement)
+---@param playerId number ID du joueur
+---@return table|nil groupData Données du groupe ou nil
 function GetGroupData(playerId)
     local group = GetPlayerGroup(playerId)
     if not group then return nil end
+    
     local members = {}
     for _, memberId in ipairs(group.members) do
         local xPlayer = ESX.GetPlayerFromId(memberId)
         if xPlayer then
-            -- Récupérer l'avatar Discord
+            -- Utiliser la version synchrone (cache uniquement)
             local avatarUrl = nil
             if Config.Discord and Config.Discord.enabled then
                 avatarUrl = exports['pvp_gunfight']:GetPlayerDiscordAvatar(memberId)
@@ -60,10 +148,11 @@ function GetGroupData(playerId)
                 isReady = group.ready[memberId] or false,
                 isYou = memberId == playerId,
                 yourId = playerId,
-                avatar = avatarUrl or Config.Discord.defaultAvatar or 'https://i.imgur.com/6VBx3io.png'
+                avatar = avatarUrl or Config.Discord.defaultAvatar or 'https://cdn.discordapp.com/embed/avatars/0.png'
             })
         end
     end
+    
     return {
         id = group.id,
         leaderId = group.leaderId,
@@ -130,14 +219,16 @@ RegisterNetEvent('pvp:inviteToGroup', function(targetId)
     end
     pendingInvites[targetId] = src
     
-    -- Récupérer l'avatar de l'inviteur
-    local inviterAvatar = nil
+    -- ⚡ CHANGEMENT: Récupérer l'avatar de l'inviteur de manière asynchrone
     if Config.Discord and Config.Discord.enabled then
-        inviterAvatar = exports['pvp_gunfight']:GetPlayerDiscordAvatar(src)
+        exports['pvp_gunfight']:GetPlayerDiscordAvatarAsync(src, function(inviterAvatar)
+            TriggerClientEvent('pvp:receiveInvite', targetId, xPlayer.getName(), src, inviterAvatar)
+            TriggerClientEvent('esx:showNotification', src, '~b~Invitation envoyée à ' .. xTarget.getName())
+        end)
+    else
+        TriggerClientEvent('pvp:receiveInvite', targetId, xPlayer.getName(), src, Config.Discord.defaultAvatar)
+        TriggerClientEvent('esx:showNotification', src, '~b~Invitation envoyée à ' .. xTarget.getName())
     end
-    
-    TriggerClientEvent('pvp:receiveInvite', targetId, xPlayer.getName(), src, inviterAvatar)
-    TriggerClientEvent('esx:showNotification', src, '~b~Invitation envoyée à ' .. xTarget.getName())
 end)
 
 RegisterNetEvent('pvp:acceptInvite', function(inviterId)
@@ -173,9 +264,14 @@ RegisterNetEvent('pvp:acceptInvite', function(inviterId)
     end
     Wait(200)
     BroadcastToGroup(group.id)
+    
+    -- ⚡ CHANGEMENT: Envoyer les données du groupe de manière asynchrone au nouveau membre
     Wait(100)
-    local groupData = GetGroupData(src)
-    TriggerClientEvent('pvp:updateGroupUI', src, groupData)
+    CreateThread(function()
+        GetGroupDataAsync(src, function(groupData)
+            TriggerClientEvent('pvp:updateGroupUI', src, groupData)
+        end)
+    end)
 end)
 
 RegisterNetEvent('pvp:leaveGroup', function()
@@ -252,38 +348,58 @@ RegisterNetEvent('pvp:toggleReady', function()
     BroadcastToGroup(group.id)
 end)
 
+-- ⚡ CHANGEMENT: Callback asynchrone pour récupérer les infos du groupe
 ESX.RegisterServerCallback('pvp:getGroupInfo', function(source, cb)
-    local groupData = GetGroupData(source)
-    cb(groupData)
+    CreateThread(function()
+        GetGroupDataAsync(source, function(groupData)
+            cb(groupData)
+        end)
+    end)
 end)
 
--- Callback pour récupérer l'avatar d'un joueur
+-- Callback pour récupérer l'avatar d'un joueur (asynchrone)
 ESX.RegisterServerCallback('pvp:getPlayerAvatar', function(source, cb, targetId)
     local playerId = targetId or source
-    local avatarUrl = nil
     
     if Config.Discord and Config.Discord.enabled then
-        avatarUrl = exports['pvp_gunfight']:GetPlayerDiscordAvatar(playerId)
+        exports['pvp_gunfight']:GetPlayerDiscordAvatarAsync(playerId, function(avatarUrl)
+            cb(avatarUrl)
+        end)
+    else
+        cb(Config.Discord and Config.Discord.defaultAvatar or 'https://cdn.discordapp.com/embed/avatars/0.png')
     end
-    
-    cb(avatarUrl or Config.Discord.defaultAvatar or 'https://i.imgur.com/6VBx3io.png')
 end)
 
--- Callback pour récupérer les avatars de plusieurs joueurs
+-- Callback pour récupérer les avatars de plusieurs joueurs (asynchrone)
 ESX.RegisterServerCallback('pvp:getPlayersAvatars', function(source, cb, playerIds)
     local avatars = {}
+    local completed = 0
+    local total = #playerIds
     
-    for _, playerId in ipairs(playerIds) do
-        local avatarUrl = nil
-        
-        if Config.Discord and Config.Discord.enabled then
-            avatarUrl = exports['pvp_gunfight']:GetPlayerDiscordAvatar(playerId)
-        end
-        
-        avatars[playerId] = avatarUrl or Config.Discord.defaultAvatar or 'https://i.imgur.com/6VBx3io.png'
+    if total == 0 then
+        cb(avatars)
+        return
     end
     
-    cb(avatars)
+    for _, playerId in ipairs(playerIds) do
+        if Config.Discord and Config.Discord.enabled then
+            exports['pvp_gunfight']:GetPlayerDiscordAvatarAsync(playerId, function(avatarUrl)
+                avatars[playerId] = avatarUrl
+                completed = completed + 1
+                
+                if completed == total then
+                    cb(avatars)
+                end
+            end)
+        else
+            avatars[playerId] = Config.Discord and Config.Discord.defaultAvatar or 'https://cdn.discordapp.com/embed/avatars/0.png'
+            completed = completed + 1
+            
+            if completed == total then
+                cb(avatars)
+            end
+        end
+    end
 end)
 
 AddEventHandler('playerDropped', function()
@@ -312,3 +428,4 @@ end)
 
 exports('GetPlayerGroup', GetPlayerGroup)
 exports('RemovePlayerFromGroup', RemovePlayerFromGroup)
+exports('GetGroupDataAsync', GetGroupDataAsync)

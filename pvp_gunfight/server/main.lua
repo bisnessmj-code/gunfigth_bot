@@ -1,6 +1,6 @@
 -- ========================================
 -- PVP GUNFIGHT - SERVER MAIN  
--- Version: 2.4.0 - Avec avatars Discord
+-- Version: 2.4.1 - Fix avatars Discord asynchrones
 -- ========================================
 
 DebugServer('Chargement du système PVP avec instances et ELO...')
@@ -349,6 +349,10 @@ function TeleportPlayersToArena(matchId, match, arena, arenaKey)
     end
 end
 
+-- ========================================
+-- ⚡ CALLBACK STATS AVEC AVATARS ASYNCHRONES
+-- ========================================
+
 ESX.RegisterServerCallback('pvp:getPlayerStats', function(source, cb)
     local xPlayer = ESX.GetPlayerFromId(source)
     if not xPlayer then 
@@ -368,39 +372,57 @@ ESX.RegisterServerCallback('pvp:getPlayerStats', function(source, cb)
             result.kills = result.kills or 0
             result.deaths = result.deaths or 0
             
-            -- Ajouter l'avatar Discord
+            -- ⚡ CHANGEMENT: Récupérer l'avatar de manière asynchrone
             if Config.Discord and Config.Discord.enabled then
-                result.avatar = exports['pvp_gunfight']:GetPlayerDiscordAvatar(source)
+                exports['pvp_gunfight']:GetPlayerDiscordAvatarAsync(source, function(avatarUrl)
+                    result.avatar = avatarUrl
+                    cb(result)
+                end)
             else
-                result.avatar = Config.Discord and Config.Discord.defaultAvatar or 'https://i.imgur.com/6VBx3io.png'
+                result.avatar = Config.Discord and Config.Discord.defaultAvatar or 'https://cdn.discordapp.com/embed/avatars/0.png'
+                cb(result)
             end
-            
-            cb(result)
         else
             DebugServer('Aucune stats trouvée, création...')
             
-            -- Récupérer l'avatar Discord pour le nouveau joueur
-            local avatarUrl = nil
+            -- ⚡ CHANGEMENT: Récupérer l'avatar pour le nouveau joueur
             if Config.Discord and Config.Discord.enabled then
-                avatarUrl = exports['pvp_gunfight']:GetPlayerDiscordAvatar(source)
+                exports['pvp_gunfight']:GetPlayerDiscordAvatarAsync(source, function(avatarUrl)
+                    MySQL.insert('INSERT INTO pvp_stats (identifier, name, kills, deaths) VALUES (?, ?, 0, 0)', {
+                        xPlayer.identifier,
+                        xPlayer.getName()
+                    }, function(id)
+                        cb({
+                            identifier = xPlayer.identifier,
+                            name = xPlayer.getName(),
+                            elo = Config.StartingELO,
+                            kills = 0,
+                            deaths = 0,
+                            matches_played = 0,
+                            wins = 0,
+                            losses = 0,
+                            avatar = avatarUrl
+                        })
+                    end)
+                end)
+            else
+                MySQL.insert('INSERT INTO pvp_stats (identifier, name, kills, deaths) VALUES (?, ?, 0, 0)', {
+                    xPlayer.identifier,
+                    xPlayer.getName()
+                }, function(id)
+                    cb({
+                        identifier = xPlayer.identifier,
+                        name = xPlayer.getName(),
+                        elo = Config.StartingELO,
+                        kills = 0,
+                        deaths = 0,
+                        matches_played = 0,
+                        wins = 0,
+                        losses = 0,
+                        avatar = Config.Discord.defaultAvatar or 'https://cdn.discordapp.com/embed/avatars/0.png'
+                    })
+                end)
             end
-            
-            MySQL.insert('INSERT INTO pvp_stats (identifier, name, kills, deaths) VALUES (?, ?, 0, 0)', {
-                xPlayer.identifier,
-                xPlayer.getName()
-            }, function(id)
-                cb({
-                    identifier = xPlayer.identifier,
-                    name = xPlayer.getName(),
-                    elo = Config.StartingELO,
-                    kills = 0,
-                    deaths = 0,
-                    matches_played = 0,
-                    wins = 0,
-                    losses = 0,
-                    avatar = avatarUrl or Config.Discord.defaultAvatar or 'https://i.imgur.com/6VBx3io.png'
-                })
-            end)
         end
     end)
 end)
@@ -419,7 +441,7 @@ ESX.RegisterServerCallback('pvp:getLeaderboard', function(source, cb)
             -- Note: Pour le leaderboard, on ne peut pas récupérer les avatars 
             -- car les joueurs ne sont pas forcément connectés
             -- On utilise l'avatar par défaut ou celui en cache DB
-            player.avatar = player.discord_avatar or Config.Discord.defaultAvatar or 'https://i.imgur.com/6VBx3io.png'
+            player.avatar = player.discord_avatar or Config.Discord.defaultAvatar or 'https://cdn.discordapp.com/embed/avatars/0.png'
         end
         
         cb(results)
@@ -835,4 +857,4 @@ AddEventHandler('playerDropped', function()
     HandlePlayerDisconnect(src)
 end)
 
-DebugSuccess('✅ Système PVP avec instances et ELO chargé (VERSION 2.4.0 - Avatars Discord)!')
+DebugSuccess('✅ Système PVP avec instances et ELO chargé (VERSION 2.4.1 - Fix avatars Discord asynchrones)!')
